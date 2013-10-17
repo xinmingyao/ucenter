@@ -1,0 +1,12 @@
+{application, ucenter,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { ucenter_app, []}},
+  {env, []}
+ ]}.

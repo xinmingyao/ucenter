@@ -1,0 +1,7 @@
+-define(LOGIN_REQ,1).
+-define(LOGIN_REP,1).
+-define(CREATE_SHARE_REQ,1).
+-define(CREATE_REP,1).
+-define(JOIN_SHARE_REQ,1).
+-define(JOIN_REP,1).
+
