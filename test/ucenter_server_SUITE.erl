@@ -28,7 +28,7 @@ all() ->
 test_server(_C)->
     start_lager(),
     application:start(ranch),
-    Ip={127,0,0,1},
+    Ip={192,168,203,157},
     Port=8088,
     application:set_env(ucenter,ip,Ip),
     application:set_env(ucenter,port,Port),

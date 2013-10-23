@@ -18,6 +18,8 @@
 -define(SERVER, ?MODULE). 
 -include("ucenter_main.hrl").
 -record(state, {socket,keepalive=0}).
+-compile([export_all]).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -50,7 +52,7 @@ start_link (_ListenPid,Socket,Transport,TransOps) ->
 init([Socket,_,_]) ->
     lager:debug("start connection"),
     inet:setopts(Socket,[binary,{packet,4},{active,true}]),
-    %erlang:send_after(1,self(),keepalive),
+    erlang:send_after(3000,self(),keepalive),
     {ok, #state{socket=Socket}}.
 
 %%--------------------------------------------------------------------
@@ -70,7 +72,6 @@ init([Socket,_,_]) ->
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
-
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -81,7 +82,6 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-
 handle_cast(_Msg, State) ->
     {noreply, State}.
 %%--------------------------------------------------------------------
@@ -94,57 +94,64 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({tcp,Socket,<<?LOGIN_REQ:16,Bin/binary>>},State)->
-    {ok,[Name,Pwd]}=msgpack:unpack(Bin),
-   lager:debug("~p  ~p",[Name,Pwd]),
+login(Data,State=#state{socket=Socket})->
+    [_Tag,Name,Pwd] = Data,
     case user_manager:login(Name,Pwd) of
 	ok ->
 	    Rep = msgpack:pack([0,<<"ok">>]),
-	    gen_tcp:send(Socket,<<?LOGIN_REP:16,Rep/binary>>);
+	    gen_tcp:send(Socket,Rep);
 	{error,Reason}->
 	    Rep = msgpack:pack([1,Reason]),
-	    gen_tcp:send(Socket,<<?LOGIN_REP:16,Rep/binary>>)
+	    gen_tcp:send(Socket,Rep)
     end,
-    {noreply, State}
-;
-handle_info({tcp,Socket,<<?CREATE_SHARE_REQ:16,Bin/binary>>},State)->
-    {ok,[Name,Ip,Port,Type]}=msgpack:unpack(Bin),
+    {noreply, State}.
+
+create_share(Data,State=#state{socket=Socket})->
+    [_Tag,Name,Ip,Port,Type] = Data,
     Share = #share{name=Name,ip=Ip,port=Port,type=Type},
     case share_manager:create_share(Share) of
 	ok ->
-	    Rep = msgpack:pack([0,"ok"]),
-	    gen_tcp:send(Socket,<<?CREATE_SHARE_REQ:16,Rep/binary>>);
-	{error,Reason}->
+	    Rep = msgpack:pack([0,<<"ok">>]),
+	    gen_tcp:send(Socket,Rep);
+	{error,Reason} when is_binary(Reason)->
 	    Rep = msgpack:pack([1,Reason]),
-	    gen_tcp:send(Socket,<<?CREATE_SHARE_REQ:16,Rep/binary>>)
+	    gen_tcp:send(Socket,Rep)
     end,
-    {noreply, State}
-;
-
-handle_info({tcp,Socket,<<?GET_SHARES_REQ:16,Bin/binary>>},State)->
-    {ok,[_Name]}=msgpack:unpack(Bin),
+    {noreply, State}.
+get_share(Data,State=#state{socket=Socket})->
+    [_Tag,_Name] = Data,
     case share_manager:get_shares() of
 	{ok,Shares} ->
 	    S = lists:map(fun(#share{name=Name,ip=Ip,port=Port,type=Type})->
 				  [Name,Ip,Port,Type] end,Shares),
 	    Rep = msgpack:pack([0,S]),
-	    gen_tcp:send(Socket,<<?CREATE_SHARE_REQ:16,Rep/binary>>);
+	    gen_tcp:send(Socket,Rep);
 	{error,Reason}->
 	    Rep = msgpack:pack([1,Reason]),
-	    gen_tcp:send(Socket,<<?CREATE_SHARE_REQ:16,Rep/binary>>)
+	    gen_tcp:send(Socket,Rep)
     end,
-    {noreply, State}
-;
+    {noreply, State}.
+
+keepalive(Data,State=#state{socket=_Socket})->
+    [<<"ping">>] = Data,
+    {noreply, State#state{keepalive=0}}.
+
 handle_info({tcp,_Socket,Bin},State)->
-    lager:error("receive data:~p",[Bin]),
-    {noreply, State};
+    {ok,T=[Fun|Data]}=msgpack:unpack(Bin),
+    lager:debug("socket rpc:~p",[T]),
+    F= list_to_atom(erlang:binary_to_list(Fun)),
+    ?MODULE:F(Data,State)
+;
 handle_info({tcp_closed,_Socket}, State) ->
+    lager:debug("close socket",[]),
     {stop,normal,State};
 handle_info(keepalive,State=#state{socket=Socket,keepalive=Count})->
+    lager:debug("keepalive"),
     if Count > 10 ->
-	    {stop,keepalive_timeout,State};
+	    {noreply, State};
+	   %% {stop,keepalive_timeout,State};
        true->
-	    gen_tcp:send(Socket,term_to_binary(ping)),
+	    gen_tcp:send(Socket,msgpack:pack([<<"keepalive">>,<<"ping">>])),
 	    erlang:send_after(5000,self(),keepalive),
 	    {noreply,State#state{keepalive=Count+1}}
     end;
